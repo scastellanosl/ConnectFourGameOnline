@@ -1,4 +1,4 @@
-package com.example.connectfourgame.ui.theme
+package com.example.connectfourgame.views.theme
 
 import androidx.compose.ui.graphics.Color
 

@@ -12,6 +12,7 @@ composeBom = "2024.09.00"
 firebaseDatabaseKtx = "21.0.0"
 
 [libraries]
+androidx-ui-text = { group = "androidx.compose.ui", name = "ui-text", version.ref = "composeBom" }
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 firebase-bom = { module = "com.google.firebase:firebase-bom", version.ref = "firebaseBom" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
