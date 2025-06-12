@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "1028612956267",
+    "project_id": "connectfouronline-3c7eb",
+    "storage_bucket": "connectfouronline-3c7eb.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1028612956267:android:d3683297509d465834912e",
+        "android_client_info": {
+          "package_name": "com.example.connectfourgame"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBR86NXUnT-ZEERBY38KNOz7j6CGwRBsmo"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
