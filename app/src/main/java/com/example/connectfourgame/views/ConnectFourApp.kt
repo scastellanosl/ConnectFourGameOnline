@@ -35,16 +35,16 @@ fun ConnectFourApp(gameViewModel: GameViewModel = viewModel()) {
             MainMenuScreen(
                 onTwoPlayersClick = { gameViewModel.setGameMode(GameMode.TWO_PLAYERS) },
                 onVsAIClick = { gameViewModel.setGameMode(GameMode.VS_AI) },
-                onOnlineClick = { gameViewModel.setGameMode(GameMode.ONLINE) }
+                onOnlineClick = { gameViewModel.setGameMode(GameMode.ONLINE) } // Cuando se hace clic en Online, cambia el modo
             )
         }
         GameMode.ONLINE -> {
             if (onlineGameId == null) {
-                // Pantalla de opciones de juego online (Crear/Unirse)
+                // <--- AQUÍ ES DONDE LLAMAS A TU OnlineGameOptionsScreen --->
                 OnlineGameOptionsScreen(
-                    onBackToMenu = { gameViewModel.setGameMode(null) }, // Volver al menú principal
-                    onCreateGame = { gameViewModel.createOnlineGame() },
-                    onJoinGame = { gameId -> gameViewModel.joinOnlineGame(gameId) }
+                    onBackClick = { gameViewModel.setGameMode(null) }, // Para volver al menú principal
+                    onCreateRoomClick = { gameViewModel.createOnlineGame() }, // Para crear una sala
+                    onJoinRoomClick = { gameId -> gameViewModel.joinOnlineGame(gameId) } // Para unirse a una sala
                 )
             } else {
                 // Pantalla de juego online (una vez que se ha creado o unido)
