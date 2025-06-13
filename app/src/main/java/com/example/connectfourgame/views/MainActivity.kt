@@ -7,8 +7,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
-import com.example.connectfourgame.views.theme.ConnectFourGameTheme
-
+import com.example.connectfourgame.ui.theme.ConnectFourGameTheme
 /**
  * Actividad principal que aloja el juego Conecta Cuatro usando Jetpack Compose.
  */

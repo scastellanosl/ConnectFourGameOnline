@@ -34,7 +34,6 @@ class GameViewModel : ViewModel() {
     private val _winner = MutableStateFlow(0) // 0=none, 1=P1, 2=P2, 3=Draw
     val winner: StateFlow<Int> = _winner.asStateFlow()
 
-    // CAMBIO IMPORTANTE AQUÍ: Ahora gameMode puede ser null
     private val _gameMode = MutableStateFlow<GameMode?>(null)
     val gameMode: StateFlow<GameMode?> = _gameMode.asStateFlow()
 
@@ -57,15 +56,11 @@ class GameViewModel : ViewModel() {
 
 
     init {
-        // Limpia cualquier listener de Firebase al inicio (útil si el ViewModel se recrea)
-        // Aunque DisposableEffect es más específico para la UI, aquí aseguramos limpieza si es necesario
         resetGame()
     }
 
     // --- Funciones de Gestión de Listener de Partida Online ---
-    // Esta función replica la lógica del DisposableEffect
     fun setupOnlineGameListener(gameId: String?) {
-        // Limpiar listener anterior si existe
         onlineGameRef?.removeEventListener(gameEventListener ?: return)
         onlineGameRef = null
         gameEventListener = null
@@ -78,7 +73,7 @@ class GameViewModel : ViewModel() {
         }
 
         val gameRef = database.child("games").child(gameId)
-        onlineGameRef = gameRef // Guarda la referencia
+        onlineGameRef = gameRef
 
         val listener = object : ValueEventListener {
             override fun onDataChange(snapshot: DataSnapshot) {
@@ -88,7 +83,6 @@ class GameViewModel : ViewModel() {
                     _playerTurn.value = (game.currentTurnPlayerId == playerLocalId)
                     _currentOnlineGameStatus.value = game.status
 
-                    // Determina el ganador o empate
                     _winner.value = if (game.status == "finished") {
                         when (game.winnerId) {
                             game.player1Id -> 1
@@ -108,16 +102,15 @@ class GameViewModel : ViewModel() {
                     println("  Ganador: ${game.winnerId ?: "Ninguno"}")
                 } else {
                     println("La partida $gameId ya no existe en Firebase. Volviendo al menú.")
-                    resetOnlineGame() // Resetea el estado online si la partida desaparece
+                    resetOnlineGame()
                 }
             }
 
             override fun onCancelled(error: DatabaseError) {
                 println("Error al leer la partida online: ${error.message}")
-                // TODO: Podrías notificar a la UI sobre este error
             }
         }
-        gameEventListener = listener // Guarda el listener
+        gameEventListener = listener
 
         gameRef.addValueEventListener(listener)
         println("Listener de Firebase ADJUNTO para partida $gameId")
@@ -125,16 +118,14 @@ class GameViewModel : ViewModel() {
 
     override fun onCleared() {
         super.onCleared()
-        // Asegúrate de remover el listener cuando el ViewModel se destruya
         onlineGameRef?.removeEventListener(gameEventListener ?: return)
         println("ViewModel onCleared: Listener de Firebase REMOVIDO.")
     }
 
     // --- Funciones de Lógica del Juego ---
-    // CAMBIO IMPORTANTE AQUÍ: Ahora setGameMode acepta GameMode?
     fun setGameMode(mode: GameMode?) {
         _gameMode.value = mode
-        resetGame() // Resetear el juego al cambiar de modo
+        resetGame()
     }
 
     fun dropDisc(col: Int) {
@@ -142,7 +133,7 @@ class GameViewModel : ViewModel() {
         val currentWinner = _winner.value
         val currentMode = _gameMode.value
 
-        if (currentWinner != 0) return // No permitir movimientos si ya hay ganador
+        if (currentWinner != 0) return
 
         when (currentMode) {
             GameMode.TWO_PLAYERS -> handleLocalMove(col)
@@ -160,7 +151,8 @@ class GameViewModel : ViewModel() {
         if (row != -1) {
             _board.value = _board.value.copyWithMove(row, col, currentPlayerValue)
             when {
-                checkWinner(_board.value, currentPlayerValue) -> _winner.value = currentPlayerValue
+                // <--- CAMBIO AQUÍ: Añadir 'row' y 'col' a checkWinner
+                checkWinner(_board.value, currentPlayerValue, row, col) -> _winner.value = currentPlayerValue
                 isBoardFull(_board.value) -> _winner.value = 3
                 else -> _playerTurn.value = !_playerTurn.value
             }
@@ -168,20 +160,18 @@ class GameViewModel : ViewModel() {
     }
 
     private fun handleAIMove(col: Int) {
-        // Lógica para el jugador local (Jugador 1)
         if (_playerTurn.value) {
             val row = findAvailableRow(_board.value, col)
             if (row != -1) {
                 val currentPlayerValue = 1
                 _board.value = _board.value.copyWithMove(row, col, currentPlayerValue)
                 when {
-                    checkWinner(_board.value, currentPlayerValue) -> _winner.value = currentPlayerValue
+                    // <--- CAMBIO AQUÍ: Añadir 'row' y 'col' a checkWinner
+                    checkWinner(_board.value, currentPlayerValue, row, col) -> _winner.value = currentPlayerValue
                     isBoardFull(_board.value) -> _winner.value = 3
                     else -> {
-                        _playerTurn.value = false // Cede el turno a la IA
-                        // Lanzar la corrutina para el movimiento de la IA
+                        _playerTurn.value = false
                         viewModelScope.launch {
-                            // Pequeño delay para simular pensamiento de la IA
                             kotlinx.coroutines.delay(500)
                             makeAIMove()
                         }
@@ -195,40 +185,43 @@ class GameViewModel : ViewModel() {
         val rows = _board.value.size
         val cols = _board.value[0].size
         val aiPlayerValue = 2
+        var chosenRow = -1
+        var chosenCol = -1
 
-        // Estrategia simple de la IA:
         // 1. Ganar si puede
-        // 2. Bloquear al jugador si va a ganar
-        // 3. Jugar en el centro
-        // 4. Jugar aleatoriamente
-
-        // 1. Ganar
         for (c in 0 until cols) {
             val r = findAvailableRow(_board.value, c)
             if (r != -1) {
                 val tempBoard = _board.value.copyWithMove(r, c, aiPlayerValue)
-                if (checkWinner(tempBoard, aiPlayerValue)) {
+                // <--- CAMBIO AQUÍ: Añadir 'r' y 'c' a checkWinner
+                if (checkWinner(tempBoard, aiPlayerValue, r, c)) {
+                    chosenRow = r
+                    chosenCol = c
                     _board.value = tempBoard
                     _winner.value = aiPlayerValue
-                    _playerTurn.value = true // IA hizo su movimiento, turno del jugador
+                    _playerTurn.value = true
                     return
                 }
             }
         }
 
-        // 2. Bloquear al jugador
+        // 2. Bloquear al jugador si va a ganar
         for (c in 0 until cols) {
             val r = findAvailableRow(_board.value, c)
             if (r != -1) {
-                val tempBoard = _board.value.copyWithMove(r, c, 1) // Simular movimiento del jugador 1
-                if (checkWinner(tempBoard, 1)) {
-                    _board.value = _board.value.copyWithMove(r, c, aiPlayerValue) // Bloquear
-                    if (checkWinner(_board.value, aiPlayerValue)) { // Si bloquear te da la victoria
+                val tempBoard = _board.value.copyWithMove(r, c, 1)
+                // <--- CAMBIO AQUÍ: Añadir 'r' y 'c' a checkWinner
+                if (checkWinner(tempBoard, 1, r, c)) {
+                    chosenRow = r
+                    chosenCol = c
+                    _board.value = _board.value.copyWithMove(r, c, aiPlayerValue)
+                    // <--- CAMBIO AQUÍ: Añadir 'r' y 'c' a checkWinner
+                    if (checkWinner(_board.value, aiPlayerValue, r, c)) {
                         _winner.value = aiPlayerValue
                     } else if (isBoardFull(_board.value)) {
                         _winner.value = 3
                     }
-                    _playerTurn.value = true // IA hizo su movimiento, turno del jugador
+                    _playerTurn.value = true
                     return
                 }
             }
@@ -238,8 +231,11 @@ class GameViewModel : ViewModel() {
         val centerCol = cols / 2
         val centerRow = findAvailableRow(_board.value, centerCol)
         if (centerRow != -1) {
+            chosenRow = centerRow
+            chosenCol = centerCol
             _board.value = _board.value.copyWithMove(centerRow, centerCol, aiPlayerValue)
-            if (checkWinner(_board.value, aiPlayerValue)) {
+            // <--- CAMBIO AQUÍ: Añadir 'centerRow' y 'centerCol' a checkWinner
+            if (checkWinner(_board.value, aiPlayerValue, centerRow, centerCol)) {
                 _winner.value = aiPlayerValue
             } else if (isBoardFull(_board.value)) {
                 _winner.value = 3
@@ -253,16 +249,18 @@ class GameViewModel : ViewModel() {
         if (availableCols.isNotEmpty()) {
             val randomCol = availableCols.random()
             val r = findAvailableRow(_board.value, randomCol)
+            chosenRow = r
+            chosenCol = randomCol
             _board.value = _board.value.copyWithMove(r, randomCol, aiPlayerValue)
-            if (checkWinner(_board.value, aiPlayerValue)) {
+            // <--- CAMBIO AQUÍ: Añadir 'r' y 'randomCol' a checkWinner
+            if (checkWinner(_board.value, aiPlayerValue, r, randomCol)) {
                 _winner.value = aiPlayerValue
             } else if (isBoardFull(_board.value)) {
                 _winner.value = 3
             }
             _playerTurn.value = true
         } else {
-            // Esto no debería ocurrir si el tablero está lleno y no se ha detectado antes
-            _winner.value = 3 // Empate
+            _winner.value = 3
         }
     }
 
@@ -274,7 +272,6 @@ class GameViewModel : ViewModel() {
             val currentOnlineGameStatus = _currentOnlineGameStatus.value
             val currentBoard = _board.value
 
-            // Asegurarse de que sea el turno del jugador local y la partida esté en juego
             if (_playerTurn.value && currentOnlineGameId != null && currentOnlineGameRef != null && currentOnlineGameStatus == "playing") {
                 val row = findAvailableRow(currentBoard, col)
                 if (row != -1) {
@@ -289,13 +286,14 @@ class GameViewModel : ViewModel() {
                             }
 
                             val updatedBoardList = currentOnlineGame.board.toMutableList()
-                            val newRow = updatedBoardList[row].toMutableList()
-                            newRow[col] = currentPlayerValue
-                            updatedBoardList[row] = newRow.toList()
+                            val newRowList = updatedBoardList[row].toMutableList()
+                            newRowList[col] = currentPlayerValue
+                            updatedBoardList[row] = newRowList.toList()
 
                             val tempBoardArray = updatedBoardList.toTypedArrayOfIntArray()
                             val newWinnerValue = when {
-                                checkWinner(tempBoardArray, currentPlayerValue) -> currentPlayerValue
+                                // <--- CAMBIO AQUÍ: Añadir 'row' y 'col' a checkWinner
+                                checkWinner(tempBoardArray, currentPlayerValue, row, col) -> currentPlayerValue
                                 isBoardFull(tempBoardArray) -> 3
                                 else -> 0
                             }
@@ -361,16 +359,14 @@ class GameViewModel : ViewModel() {
                             _board.value = initialBoard.toTypedArrayOfIntArray()
                             _winner.value = 0
                             _playerTurn.value = true
-                            setupOnlineGameListener(newGameId) // Configura el listener inmediatamente
+                            setupOnlineGameListener(newGameId)
                             println("Partida online creada con ID: $newGameId. Esperando jugador 2...")
                         }
                         .addOnFailureListener { e ->
                             println("Error al crear partida online: ${e.message}")
-                            // TODO: Mostrar mensaje de error en UI
                         }
                 } else {
                     println("No se pudo crear la partida: No se encontró un ID único.")
-                    // TODO: Mostrar mensaje de error en UI
                 }
             }
         }
@@ -395,39 +391,33 @@ class GameViewModel : ViewModel() {
                                 .addOnSuccessListener {
                                     _onlineGameId.value = enteredGameId
                                     _isCreatingGame.value = false
-                                    setupOnlineGameListener(enteredGameId) // Configura el listener
+                                    setupOnlineGameListener(enteredGameId)
                                     println("Te has unido a la partida con ID: $enteredGameId")
                                 }
                                 .addOnFailureListener { e ->
                                     println("Error al unirse a la partida: ${e.message}")
-                                    // TODO: Mostrar mensaje de error en UI
                                 }
                         } else {
                             println("La partida no está disponible para unirse.")
-                            // TODO: Mostrar mensaje de error en UI (ej. partida llena o ya iniciada)
                         }
                     } else {
                         println("La partida con ID $enteredGameId no existe.")
-                        // TODO: Mostrar mensaje de error en UI (ej. ID incorrecto)
                     }
                 }.addOnFailureListener { e ->
                     println("Error al obtener partida: ${e.message}")
-                    // TODO: Mostrar mensaje de error en UI
                 }
             } else {
                 println("ERROR: El ID de partida debe ser un número de 6 cifras.")
-                // TODO: Mostrar mensaje de error en UI
             }
         }
     }
-
 
     // --- Funciones de Reseteo ---
     fun resetGame() {
         _board.value = Array(6) { IntArray(7) { 0 } }
         _winner.value = 0
         _playerTurn.value = true
-        resetOnlineGame() // Asegúrate de resetear también lo online si se resetea el juego
+        resetOnlineGame()
     }
 
     fun resetOnlineGame() {
