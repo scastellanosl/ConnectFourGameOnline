@@ -6,8 +6,6 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.connectfourgame.model.GameMode
-import com.example.connectfourgame.ui.GameScreen
-import com.example.connectfourgame.ui.OnlineGameOptionsScreen
 import com.example.connectfourgame.viewmodel.GameViewModel
 
 
