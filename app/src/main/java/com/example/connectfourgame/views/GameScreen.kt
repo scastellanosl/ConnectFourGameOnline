@@ -42,6 +42,7 @@ import com.example.connectfourgame.R
 import com.example.connectfourgame.model.GameMode
 import com.example.connectfourgame.viewmodel.GameViewModel
 import com.example.connectfourgame.views.Board
+import androidx.compose.runtime.LaunchedEffect
 
 @Composable
 fun GameScreen(
@@ -66,7 +67,14 @@ fun GameScreen(
     ) {
         val currentWord by viewModel.currentWordEnglish.collectAsState()
         val questionAttempted by viewModel.questionAttempted.collectAsState()
-        val secondsLeft by viewModel.secondsLeft.collectAsState() // Debes exponer este estado en tu ViewModel
+        val secondsLeft by viewModel.secondsLeft.collectAsState()
+
+        // --- ESTE ES EL CAMBIO CLAVE ---
+        LaunchedEffect(playerTurn, currentWord, questionAttempted) {
+            if (!questionAttempted && currentWord.isBlank() && onlineGameId != null) {
+                viewModel.assignWordAndStartTimer(onlineGameId)
+            }
+        }
 
         if (!questionAttempted && currentWord.isNotBlank()) {
             VocabularyQuestion(
@@ -76,9 +84,9 @@ fun GameScreen(
                     viewModel.submitTranslationAnswer(onlineGameId ?: "", answer)
                 }
             )
-            return // No mostrar el tablero hasta responder
+            return
         }
-    }    
+    }
 
     Box(
         modifier = Modifier.fillMaxSize(),
