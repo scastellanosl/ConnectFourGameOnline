@@ -1,19 +1,13 @@
 package com.example.connectfourgame.viewmodel
 
-import androidx.lifecycle.ViewModel
+import android.app.Application
+import android.content.Context
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.connectfourgame.model.Game
 import com.example.connectfourgame.model.GameMode
-import com.example.connectfourgame.utils.checkWinner
-import com.example.connectfourgame.utils.copyWithMove
-import com.example.connectfourgame.utils.findAvailableRow
-import com.example.connectfourgame.utils.generateUniqueGameId
-import com.example.connectfourgame.utils.isBoardFull
-import com.example.connectfourgame.utils.toTypedArrayOfIntArray
-import com.google.firebase.database.DataSnapshot
-import com.google.firebase.database.DatabaseError
-import com.google.firebase.database.DatabaseReference
-import com.google.firebase.database.ValueEventListener
+import com.example.connectfourgame.utils.*
+import com.google.firebase.database.*
 import com.google.firebase.database.ktx.database
 import com.google.firebase.ktx.Firebase
 import kotlinx.coroutines.Job
@@ -23,7 +17,25 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.util.UUID
 
-class GameViewModel : ViewModel() {
+class GameViewModel(application: Application) : AndroidViewModel(application) {
+
+
+
+    // --- ID persistente del jugador ---
+    private val prefs = application.getSharedPreferences("connect4_prefs", Context.MODE_PRIVATE)
+    private val _playerLocalId = loadOrCreatePlayerId()
+    val playerLocalId: String get() = _playerLocalId
+
+    private fun loadOrCreatePlayerId(): String {
+        val existing = prefs.getString("player_id", null)
+        return if (existing != null) {
+            existing
+        } else {
+            val newId = UUID.randomUUID().toString()
+            prefs.edit().putString("player_id", newId).apply()
+            newId
+        }
+    }
 
     // --- Propiedades de Estado del Juego (observables por la UI) ---
     private val _board = MutableStateFlow(Array(6) { IntArray(7) { 0 } })
@@ -40,7 +52,6 @@ class GameViewModel : ViewModel() {
 
     // --- Propiedades para el Juego Online ---
     private val database: DatabaseReference = Firebase.database.reference
-    private val playerLocalId: String = UUID.randomUUID().toString()
 
     private val _onlineGameId = MutableStateFlow<String?>(null)
     val onlineGameId: StateFlow<String?> = _onlineGameId.asStateFlow()
@@ -528,4 +539,5 @@ class GameViewModel : ViewModel() {
         _currentOnlineGameStatus.value = null
         println("Estado de partida online reseteado.")
     }
+
 }
