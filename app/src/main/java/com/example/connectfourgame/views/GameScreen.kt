@@ -56,22 +56,59 @@ fun GameScreen(
     onColumnClick: (Int) -> Unit,
     onResetGame: () -> Unit,
     onBackToMenu: () -> Unit,
-    // Añade estos parámetros si los necesitas:
-    viewModel: GameViewModel? = null // <-- para acceder a los estados de vocabulario
+    viewModel: GameViewModel? = null
 ) {
 
+    // 1. Mostrar código de sala SOLO si eres anfitrión y la sala está esperando
+    if (
+        gameMode == GameMode.ONLINE &&
+        winner == 0 &&
+        currentOnlineGameStatus == "waiting" &&
+        isCreatingGame &&
+        onlineGameId != null
+    ) {
+        Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
+                Text("Tu ID de partida:", style = MaterialTheme.typography.titleSmall)
+                Spacer(modifier = Modifier.height(4.dp))
+                SelectionContainer {
+                    Text(
+                        text = onlineGameId,
+                        style = MaterialTheme.typography.headlineSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier
+                            .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(4.dp))
+                            .padding(horizontal = 12.dp, vertical = 6.dp)
+                    )
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "Esperando a otro jugador...",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = Color.Yellow
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+            }
+        }
+        return
+    }
+
+    // 2. Mostrar pregunta SOLO si la partida está en juego y es tu turno
     if (
         gameMode == GameMode.ONLINE &&
         playerTurn &&
-        viewModel != null
+        viewModel != null &&
+        currentOnlineGameStatus == "playing"
     ) {
         val currentWord by viewModel.currentWordEnglish.collectAsState()
         val questionAttempted by viewModel.questionAttempted.collectAsState()
         val secondsLeft by viewModel.secondsLeft.collectAsState()
 
-        // --- ESTE ES EL CAMBIO CLAVE ---
-        LaunchedEffect(playerTurn, currentWord, questionAttempted) {
-            if (!questionAttempted && currentWord.isBlank() && onlineGameId != null) {
+        LaunchedEffect(playerTurn, currentWord, questionAttempted, currentOnlineGameStatus) {
+            if (!questionAttempted && currentWord.isBlank() && onlineGameId != null && currentOnlineGameStatus == "playing") {
                 viewModel.assignWordAndStartTimer(onlineGameId)
             }
         }
@@ -81,7 +118,7 @@ fun GameScreen(
                 wordEnglish = currentWord,
                 secondsLeft = secondsLeft,
                 onSubmit = { answer ->
-                    viewModel.submitTranslationAnswer(onlineGameId ?: "", answer)
+                    viewModel.submitTranslationAnswer(onlineGameId.toString(), answer)
                 }
             )
             return
@@ -168,9 +205,13 @@ fun GameScreen(
                 Spacer(modifier = Modifier.height(16.dp))
             }
 
-            // UI del tablero de juego
+            val canPlay = when {
+                gameMode == GameMode.ONLINE -> viewModel?.questionAttempted?.collectAsState()?.value == true &&
+                        viewModel?.lastGuessedCorrectly?.collectAsState()?.value == true
+                else -> true
+            }
             Board(board) { col ->
-                onColumnClick(col)
+                if (canPlay) onColumnClick(col)
             }
 
             Spacer(modifier = Modifier.height(16.dp))
