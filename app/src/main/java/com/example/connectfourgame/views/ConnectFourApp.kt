@@ -56,7 +56,9 @@ fun ConnectFourApp(gameViewModel: GameViewModel = viewModel()) {
                     currentOnlineGameStatus = currentOnlineGameStatus,
                     onColumnClick = { col -> gameViewModel.dropDisc(col) },
                     onResetGame = { gameViewModel.resetGame() },
-                    onBackToMenu = { gameViewModel.setGameMode(null) }
+                    onBackToMenu = { gameViewModel.setGameMode(null) },
+                    viewModel = gameViewModel
+
                 )
             }
         }
