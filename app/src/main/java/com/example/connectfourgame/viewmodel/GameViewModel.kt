@@ -19,7 +19,8 @@ import java.util.UUID
 
 class GameViewModel(application: Application) : AndroidViewModel(application) {
 
-
+    private val _lastGuessedCorrectly = MutableStateFlow(false)
+    val lastGuessedCorrectly: StateFlow<Boolean> = _lastGuessedCorrectly
 
     // --- ID persistente del jugador ---
     private val prefs = application.getSharedPreferences("connect4_prefs", Context.MODE_PRIVATE)
@@ -79,10 +80,10 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     val secondsLeft: StateFlow<Int> = _secondsLeft
 
 
-    // Cuando recibas datos de Firebase, actualiza estos estados:
     fun updateVocabularyStatesFromGame(game: Game) {
         _currentWordEnglish.value = game.currentWordEnglish
         _questionAttempted.value = game.questionAttempted
+        _lastGuessedCorrectly.value = game.lastGuessedCorrectly
         // _secondsLeft.value lo manejas en tu lógica de temporizador
     }
 
@@ -98,7 +99,6 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         _currentOnlineGameStatus.value = null
 
         if (gameId == null) {
-            println("setupOnlineGameListener: Game ID es nulo. Limpiando listener.")
             _onlineGameId.value = null
             return
         }
@@ -115,6 +115,16 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                     _playerTurn.value = (game.currentTurnPlayerId == playerLocalId)
                     _currentOnlineGameStatus.value = game.status
 
+                    // SOLO asignar palabra si la partida está en "playing"
+                    if (
+                        game.status == "playing" &&
+                        _playerTurn.value &&
+                        !game.questionAttempted &&
+                        game.currentWordEnglish.isBlank()
+                    ) {
+                        assignWordAndStartTimer(game.gameId)
+                    }
+
                     _winner.value = if (game.status == "finished") {
                         when (game.winnerId) {
                             game.player1Id -> 1
@@ -126,26 +136,14 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                     } else {
                         0
                     }
-
-                    println("Estado de la partida actualizado desde Firebase:")
-                    println("  ID: ${game.gameId}")
-                    println("  Turno de: ${game.currentTurnPlayerId == playerLocalId} (Yo: $playerLocalId)")
-                    println("  Estado: ${game.status}")
-                    println("  Ganador: ${game.winnerId ?: "Ninguno"}")
                 } else {
-                    println("La partida $gameId ya no existe en Firebase. Volviendo al menú.")
                     resetOnlineGame()
                 }
             }
-
-            override fun onCancelled(error: DatabaseError) {
-                println("Error al leer la partida online: ${error.message}")
-            }
+            override fun onCancelled(error: DatabaseError) {}
         }
         gameEventListener = listener
-
         gameRef.addValueEventListener(listener)
-        println("Listener de Firebase ADJUNTO para partida $gameId")
     }
 
     override fun onCleared() {
@@ -170,7 +168,12 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         when (currentMode) {
             GameMode.TWO_PLAYERS -> handleLocalMove(col)
             GameMode.VS_AI -> handleAIMove(col)
-            GameMode.ONLINE -> handleOnlineMove(col)
+            GameMode.ONLINE -> {
+                // Solo permite colocar ficha si la pregunta fue respondida correctamente
+                if (_questionAttempted.value && _lastGuessedCorrectly.value) {
+                    handleOnlineMove(col)
+                }
+            }
             null -> { /* No hacer nada si no hay modo seleccionado */ }
         }
     }
@@ -222,12 +225,13 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                 database.child("games").child(gameId).setValue(updatedGame)
                 questionTimerJob?.cancel()
                 if (!isCorrect) {
-                    // Si es incorrecto, pasa el turno inmediatamente
                     val nextPlayerId = if (game.currentTurnPlayerId == game.player1Id) game.player2Id else game.player1Id
                     val gameAfterTurn = updatedGame.copy(
                         currentTurnPlayerId = nextPlayerId ?: "",
                         questionAttempted = false,
-                        lastGuessedCorrectly = false
+                        lastGuessedCorrectly = false,
+                        currentWordEnglish = "",
+                        correctTranslationSpanish = ""
                     )
                     database.child("games").child(gameId).setValue(gameAfterTurn)
                 }
@@ -240,7 +244,12 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     fun startQuestionTimer(gameId: String) {
         questionTimerJob?.cancel()
         questionTimerJob = viewModelScope.launch {
-            kotlinx.coroutines.delay(15_000)
+            _secondsLeft.value = 15
+            for (i in 14 downTo 0) {
+                kotlinx.coroutines.delay(1000)
+                _secondsLeft.value = i
+            }
+            // Cuando termina el tiempo, verifica si aún no se respondió correctamente
             database.child("games").child(gameId).get().addOnSuccessListener { snapshot ->
                 val game = snapshot.getValue(Game::class.java)
                 if (game != null && !game.lastGuessedCorrectly && !game.questionAttempted) {
@@ -249,7 +258,9 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                     val updatedGame = game.copy(
                         currentTurnPlayerId = nextPlayerId ?: "",
                         questionAttempted = false,
-                        lastGuessedCorrectly = false
+                        lastGuessedCorrectly = false,
+                        currentWordEnglish = "",
+                        correctTranslationSpanish = ""
                     )
                     database.child("games").child(gameId).setValue(updatedGame)
                 }
@@ -374,7 +385,6 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-
     private fun handleOnlineMove(col: Int) {
         viewModelScope.launch {
             val currentOnlineGameId = _onlineGameId.value
@@ -402,12 +412,12 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
 
                             val tempBoardArray = updatedBoardList.toTypedArrayOfIntArray()
                             val newWinnerValue = when {
-                                // <--- CAMBIO AQUÍ: Añadir 'row' y 'col' a checkWinner
                                 checkWinner(tempBoardArray, currentPlayerValue, row, col) -> currentPlayerValue
                                 isBoardFull(tempBoardArray) -> 3
                                 else -> 0
                             }
 
+                            // --- AQUÍ VA EL BLOQUE QUE LIMPIA LA PALABRA ---
                             val updatedGame = currentOnlineGame.copy(
                                 board = updatedBoardList,
                                 currentTurnPlayerId = nextPlayerId ?: "",
@@ -416,7 +426,11 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                                     1 -> currentOnlineGame.player1Id
                                     2 -> currentOnlineGame.player2Id
                                     else -> null
-                                }
+                                },
+                                currentWordEnglish = "",
+                                correctTranslationSpanish = "",
+                                questionAttempted = false,
+                                lastGuessedCorrectly = false
                             )
 
                             currentOnlineGameRef.setValue(updatedGame)
@@ -444,7 +458,6 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
     }
-
 
     // --- Funciones para Partidas Online Específicas ---
     fun createOnlineGame() {
