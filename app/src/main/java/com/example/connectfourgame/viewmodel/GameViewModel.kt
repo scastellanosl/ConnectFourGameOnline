@@ -1,28 +1,41 @@
 package com.example.connectfourgame.viewmodel
 
-import androidx.lifecycle.ViewModel
+import android.app.Application
+import android.content.Context
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.connectfourgame.model.Game
 import com.example.connectfourgame.model.GameMode
-import com.example.connectfourgame.utils.checkWinner
-import com.example.connectfourgame.utils.copyWithMove
-import com.example.connectfourgame.utils.findAvailableRow
-import com.example.connectfourgame.utils.generateUniqueGameId
-import com.example.connectfourgame.utils.isBoardFull
-import com.example.connectfourgame.utils.toTypedArrayOfIntArray
-import com.google.firebase.database.DataSnapshot
-import com.google.firebase.database.DatabaseError
-import com.google.firebase.database.DatabaseReference
-import com.google.firebase.database.ValueEventListener
+import com.example.connectfourgame.utils.*
+import com.google.firebase.database.*
 import com.google.firebase.database.ktx.database
 import com.google.firebase.ktx.Firebase
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.util.UUID
 
-class GameViewModel : ViewModel() {
+class GameViewModel(application: Application) : AndroidViewModel(application) {
+
+
+
+    // --- ID persistente del jugador ---
+    private val prefs = application.getSharedPreferences("connect4_prefs", Context.MODE_PRIVATE)
+    private val _playerLocalId = loadOrCreatePlayerId()
+    val playerLocalId: String get() = _playerLocalId
+
+    private fun loadOrCreatePlayerId(): String {
+        val existing = prefs.getString("player_id", null)
+        return if (existing != null) {
+            existing
+        } else {
+            val newId = UUID.randomUUID().toString()
+            prefs.edit().putString("player_id", newId).apply()
+            newId
+        }
+    }
 
     // --- Propiedades de Estado del Juego (observables por la UI) ---
     private val _board = MutableStateFlow(Array(6) { IntArray(7) { 0 } })
@@ -39,7 +52,6 @@ class GameViewModel : ViewModel() {
 
     // --- Propiedades para el Juego Online ---
     private val database: DatabaseReference = Firebase.database.reference
-    private val playerLocalId: String = UUID.randomUUID().toString()
 
     private val _onlineGameId = MutableStateFlow<String?>(null)
     val onlineGameId: StateFlow<String?> = _onlineGameId.asStateFlow()
@@ -54,6 +66,25 @@ class GameViewModel : ViewModel() {
     private var onlineGameRef: DatabaseReference? = null
     private var gameEventListener: ValueEventListener? = null
 
+    // Estado para la palabra actual en inglés
+    private val _currentWordEnglish = MutableStateFlow("")
+    val currentWordEnglish: StateFlow<String> = _currentWordEnglish
+
+    // Estado para saber si la pregunta ya fue intentada
+    private val _questionAttempted = MutableStateFlow(false)
+    val questionAttempted: StateFlow<Boolean> = _questionAttempted
+
+    // Estado para el temporizador
+    private val _secondsLeft = MutableStateFlow(15)
+    val secondsLeft: StateFlow<Int> = _secondsLeft
+
+
+    // Cuando recibas datos de Firebase, actualiza estos estados:
+    fun updateVocabularyStatesFromGame(game: Game) {
+        _currentWordEnglish.value = game.currentWordEnglish
+        _questionAttempted.value = game.questionAttempted
+        // _secondsLeft.value lo manejas en tu lógica de temporizador
+    }
 
     init {
         resetGame()
@@ -79,6 +110,7 @@ class GameViewModel : ViewModel() {
             override fun onDataChange(snapshot: DataSnapshot) {
                 val game = snapshot.getValue(Game::class.java)
                 if (game != null) {
+                    updateVocabularyStatesFromGame(game)
                     _board.value = game.board.toTypedArrayOfIntArray()
                     _playerTurn.value = (game.currentTurnPlayerId == playerLocalId)
                     _currentOnlineGameStatus.value = game.status
@@ -158,6 +190,84 @@ class GameViewModel : ViewModel() {
             }
         }
     }
+
+    fun assignWordAndStartTimer(gameId: String) {
+        fetchRandomWordFromFirebase { english, spanish ->
+            val gameRef = database.child("games").child(gameId)
+            gameRef.get().addOnSuccessListener { snapshot ->
+                val game = snapshot.getValue(Game::class.java)
+                if (game != null) {
+                    val updatedGame = game.copy(
+                        currentWordEnglish = english,
+                        correctTranslationSpanish = spanish,
+                        questionAttempted = false,
+                        lastGuessedCorrectly = false
+                    )
+                    gameRef.setValue(updatedGame)
+                    startQuestionTimer(gameId)
+                }
+            }
+        }
+    }
+
+    fun submitTranslationAnswer(gameId: String, answer: String) {
+        database.child("games").child(gameId).get().addOnSuccessListener { snapshot ->
+            val game = snapshot.getValue(Game::class.java)
+            if (game != null && !game.questionAttempted) {
+                val isCorrect = answer.trim().equals(game.correctTranslationSpanish.trim(), ignoreCase = true)
+                val updatedGame = game.copy(
+                    lastGuessedCorrectly = isCorrect,
+                    questionAttempted = true
+                )
+                database.child("games").child(gameId).setValue(updatedGame)
+                questionTimerJob?.cancel()
+                if (!isCorrect) {
+                    // Si es incorrecto, pasa el turno inmediatamente
+                    val nextPlayerId = if (game.currentTurnPlayerId == game.player1Id) game.player2Id else game.player1Id
+                    val gameAfterTurn = updatedGame.copy(
+                        currentTurnPlayerId = nextPlayerId ?: "",
+                        questionAttempted = false,
+                        lastGuessedCorrectly = false
+                    )
+                    database.child("games").child(gameId).setValue(gameAfterTurn)
+                }
+            }
+        }
+    }
+
+    private var questionTimerJob: Job? = null
+
+    fun startQuestionTimer(gameId: String) {
+        questionTimerJob?.cancel()
+        questionTimerJob = viewModelScope.launch {
+            kotlinx.coroutines.delay(15_000)
+            database.child("games").child(gameId).get().addOnSuccessListener { snapshot ->
+                val game = snapshot.getValue(Game::class.java)
+                if (game != null && !game.lastGuessedCorrectly && !game.questionAttempted) {
+                    // Cambia el turno al otro jugador
+                    val nextPlayerId = if (game.currentTurnPlayerId == game.player1Id) game.player2Id else game.player1Id
+                    val updatedGame = game.copy(
+                        currentTurnPlayerId = nextPlayerId ?: "",
+                        questionAttempted = false,
+                        lastGuessedCorrectly = false
+                    )
+                    database.child("games").child(gameId).setValue(updatedGame)
+                }
+            }
+        }
+    }
+
+    private fun fetchRandomWordFromFirebase(onResult: (english: String, spanish: String) -> Unit) {
+        database.child("words").get().addOnSuccessListener { snapshot ->
+            val wordsList = snapshot.children.mapNotNull { it.getValue(Word::class.java) }
+            if (wordsList.isNotEmpty()) {
+                val word = wordsList.random()
+                onResult(word.english, word.spanish)
+            }
+        }
+    }
+
+    data class Word(val english: String = "", val spanish: String = "")    
 
     private fun handleAIMove(col: Int) {
         if (_playerTurn.value) {
@@ -429,4 +539,5 @@ class GameViewModel : ViewModel() {
         _currentOnlineGameStatus.value = null
         println("Estado de partida online reseteado.")
     }
+
 }
