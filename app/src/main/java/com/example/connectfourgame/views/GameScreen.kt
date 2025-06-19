@@ -29,7 +29,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
@@ -43,6 +42,10 @@ import com.example.connectfourgame.model.GameMode
 import com.example.connectfourgame.viewmodel.GameViewModel
 import com.example.connectfourgame.views.Board
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.style.TextAlign
 
 @Composable
 fun GameScreen(
@@ -71,6 +74,14 @@ fun GameScreen(
             modifier = Modifier.fillMaxSize(),
             contentAlignment = Alignment.Center
         ) {
+
+            Image(
+                painter = painterResource(id = R.drawable.background_online),
+                contentDescription = "Fondo del Menú Online",
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize().alpha(0.35f)
+            )
+
             Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
                 Text("Tu ID de partida:", style = MaterialTheme.typography.titleSmall)
                 Spacer(modifier = Modifier.height(4.dp))
@@ -81,14 +92,20 @@ fun GameScreen(
                         color = MaterialTheme.colorScheme.primary,
                         modifier = Modifier
                             .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(4.dp))
-                            .padding(horizontal = 12.dp, vertical = 6.dp)
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                        fontSize = 40.sp,
+                        fontWeight = FontWeight.Bold
                     )
                 }
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
                     text = "Esperando a otro jugador...",
                     style = MaterialTheme.typography.bodyLarge,
-                    color = Color.Yellow
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White,
+                    fontStyle = FontStyle.Italic,
+                    modifier = Modifier.padding(top = 20.dp),
+                    fontSize = 20.sp
                 )
                 Spacer(modifier = Modifier.height(16.dp))
             }
@@ -131,7 +148,7 @@ fun GameScreen(
     ) {
         // Fondo de pantalla con imagen
         Image(
-            painter = painterResource(id = R.drawable.background_game), // Reemplaza con el nombre de tu archivo!
+            painter = painterResource(id = R.drawable.background_game),
             contentDescription = "Fondo de Pantalla del Juego",
             modifier = Modifier.fillMaxSize(),
             contentScale = ContentScale.Crop
@@ -225,7 +242,7 @@ fun GameScreen(
     }
 }
 
-// No se especifica filepath, colócalo en la pantalla de juego online
+// Composable de solicitud de palabra
 @Composable
 fun VocabularyQuestion(
     wordEnglish: String,
@@ -233,17 +250,34 @@ fun VocabularyQuestion(
     secondsLeft: Int
 ) {
     var answer by remember { mutableStateOf("") }
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text("Traduce la palabra:", fontWeight = FontWeight.Bold)
-        Text(wordEnglish, fontSize = 28.sp, color = Color.Blue)
-        OutlinedTextField(
-            value = answer,
-            onValueChange = { answer = it },
-            label = { Text("Traducción en español") }
+
+    Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center
+    ){
+        Image(
+            painter = painterResource(id = R.drawable.background_game),
+            contentDescription = "Fondo de Pantalla del Juego",
+            modifier = Modifier.fillMaxSize().alpha(0.2f),
+            contentScale = ContentScale.Crop
         )
-        Text("Tiempo restante: $secondsLeft s", color = Color.Red)
-        Button(onClick = { onSubmit(answer) }) {
-            Text("Enviar")
+
+        Column(modifier = Modifier.align(alignment = Alignment.Center)){
+
+            Text("Traduce la palabra:", fontWeight = FontWeight.Bold, fontSize = 25.sp, modifier = Modifier.fillMaxWidth().padding(bottom = 20.dp), textAlign = TextAlign.Center)
+            Text(wordEnglish, fontSize = 28.sp, color = Color.White, fontWeight = FontWeight.Bold, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center, fontStyle = FontStyle.Italic)
+            OutlinedTextField(modifier = Modifier.align(Alignment.CenterHorizontally),
+                value = answer,
+                onValueChange = { answer = it },
+                label = { Text("Traducción en español")}
+            )
+            Text("Tiempo restante: $secondsLeft s", color = Color.Red, fontSize = 25.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(top = 40.dp, bottom = 20.dp))
+
+            Button(onClick = { onSubmit(answer) }, modifier = Modifier.align(Alignment.CenterHorizontally)) {
+                Text("Enviar")
+            }
+
         }
+
     }
 }
