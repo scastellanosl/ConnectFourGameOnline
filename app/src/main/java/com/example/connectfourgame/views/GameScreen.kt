@@ -40,7 +40,7 @@ import androidx.compose.ui.unit.sp
 import com.example.connectfourgame.R
 import com.example.connectfourgame.model.GameMode
 import com.example.connectfourgame.viewmodel.GameViewModel
-import com.example.connectfourgame.views.Board
+import com.example.connectfourgame.views.composables.Board
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.alpha
