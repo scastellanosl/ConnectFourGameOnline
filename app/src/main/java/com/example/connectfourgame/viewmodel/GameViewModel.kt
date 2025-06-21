@@ -4,12 +4,10 @@ import android.app.Application
 import android.content.Context
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.connectfourgame.model.Game
-import com.example.connectfourgame.model.GameMode
+import com.example.connectfourgame.model.*
 import com.example.connectfourgame.utils.*
-import com.google.firebase.database.*
-import com.google.firebase.database.ktx.database
-import com.google.firebase.ktx.Firebase
+import com.example.connectfourgame.repository.userRepository
+import com.example.connectfourgame.auth_functions.logic
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -22,7 +20,6 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     private val _lastGuessedCorrectly = MutableStateFlow(false)
     val lastGuessedCorrectly: StateFlow<Boolean> = _lastGuessedCorrectly
 
-    // --- ID persistente del jugador ---
     private val prefs = application.getSharedPreferences("connect4_prefs", Context.MODE_PRIVATE)
     private val _playerLocalId = loadOrCreatePlayerId()
     val playerLocalId: String get() = _playerLocalId
@@ -38,128 +35,73 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // --- Propiedades de Estado del Juego (observables por la UI) ---
     private val _board = MutableStateFlow(Array(6) { IntArray(7) { 0 } })
     val board: StateFlow<Array<IntArray>> = _board.asStateFlow()
 
-    private val _playerTurn = MutableStateFlow(true) // true para Jugador 1 (local o tu turno en online)
+    private val _playerTurn = MutableStateFlow(true)
     val playerTurn: StateFlow<Boolean> = _playerTurn.asStateFlow()
 
-    private val _winner = MutableStateFlow(0) // 0=none, 1=P1, 2=P2, 3=Draw
+    private val _winner = MutableStateFlow(0)
     val winner: StateFlow<Int> = _winner.asStateFlow()
 
     private val _gameMode = MutableStateFlow<GameMode?>(null)
     val gameMode: StateFlow<GameMode?> = _gameMode.asStateFlow()
 
-    // --- Propiedades para el Juego Online ---
-    private val database: DatabaseReference = Firebase.database.reference
+    private val repo = userRepository()
 
     private val _onlineGameId = MutableStateFlow<String?>(null)
     val onlineGameId: StateFlow<String?> = _onlineGameId.asStateFlow()
 
-    private val _isCreatingGame = MutableStateFlow(false) // true si está creando una partida, false si se une
+    private val _isCreatingGame = MutableStateFlow(false)
     val isCreatingGame: StateFlow<Boolean> = _isCreatingGame.asStateFlow()
 
     private val _currentOnlineGameStatus = MutableStateFlow<String?>(null)
     val currentOnlineGameStatus: StateFlow<String?> = _currentOnlineGameStatus.asStateFlow()
 
-    // Referencias para Firebase (gestionadas internamente por el ViewModel)
-    private var onlineGameRef: DatabaseReference? = null
-    private var gameEventListener: ValueEventListener? = null
-
-    // Estado para la palabra actual en inglés
     private val _currentWordEnglish = MutableStateFlow("")
     val currentWordEnglish: StateFlow<String> = _currentWordEnglish
 
-    // Estado para saber si la pregunta ya fue intentada
     private val _questionAttempted = MutableStateFlow(false)
     val questionAttempted: StateFlow<Boolean> = _questionAttempted
 
-    // Estado para el temporizador
     private val _secondsLeft = MutableStateFlow(15)
     val secondsLeft: StateFlow<Int> = _secondsLeft
-
 
     fun updateVocabularyStatesFromGame(game: Game) {
         _currentWordEnglish.value = game.currentWordEnglish
         _questionAttempted.value = game.questionAttempted
         _lastGuessedCorrectly.value = game.lastGuessedCorrectly
-        // _secondsLeft.value lo manejas en tu lógica de temporizador
     }
 
     init {
         resetGame()
     }
 
-    // --- Funciones de Gestión de Listener de Partida Online ---
     fun setupOnlineGameListener(gameId: String?) {
-        onlineGameRef?.removeEventListener(gameEventListener ?: return)
-        onlineGameRef = null
-        gameEventListener = null
-        _currentOnlineGameStatus.value = null
-
-        if (gameId == null) {
-            _onlineGameId.value = null
-            return
-        }
-
-        val gameRef = database.child("games").child(gameId)
-        onlineGameRef = gameRef
-
-        val listener = object : ValueEventListener {
-            override fun onDataChange(snapshot: DataSnapshot) {
-                val game = snapshot.getValue(Game::class.java)
-                if (game != null) {
-                    updateVocabularyStatesFromGame(game)
-                    _board.value = game.board.toTypedArrayOfIntArray()
-                    _playerTurn.value = (game.currentTurnPlayerId == playerLocalId)
-                    _currentOnlineGameStatus.value = game.status
-
-                    // SOLO asignar palabra si la partida está en "playing"
-                    if (
-                        game.status == "playing" &&
-                        _playerTurn.value &&
-                        !game.questionAttempted &&
-                        game.currentWordEnglish.isBlank()
-                    ) {
-                        assignWordAndStartTimer(game.gameId)
-                    }
-
-                    _winner.value = if (game.status == "finished") {
-                        when (game.winnerId) {
-                            game.player1Id -> 1
-                            game.player2Id -> 2
-                            else -> 0
-                        }
-                    } else if (game.status == "draw") {
-                        3
-                    } else {
-                        0
-                    }
-                } else {
-                    resetOnlineGame()
-                }
-            }
-            override fun onCancelled(error: DatabaseError) {}
-        }
-        gameEventListener = listener
-        gameRef.addValueEventListener(listener)
+        repo.setupOnlineGameListener(
+            gameId,
+            playerLocalId,
+            { game -> updateVocabularyStatesFromGame(game) },
+            { board -> _board.value = board },
+            { turn -> _playerTurn.value = turn },
+            { status -> _currentOnlineGameStatus.value = status },
+            { id -> assignWordAndStartTimer(id) },
+            { winner -> _winner.value = winner },
+            { resetOnlineGame() }
+        )
     }
 
     override fun onCleared() {
         super.onCleared()
-        onlineGameRef?.removeEventListener(gameEventListener ?: return)
-        println("ViewModel onCleared: Listener de Firebase REMOVIDO.")
+        repo.removeOnlineGameListener()
     }
 
-    // --- Funciones de Lógica del Juego ---
     fun setGameMode(mode: GameMode?) {
         _gameMode.value = mode
         resetGame()
     }
 
     fun dropDisc(col: Int) {
-        val currentBoard = _board.value
         val currentWinner = _winner.value
         val currentMode = _gameMode.value
 
@@ -169,74 +111,46 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             GameMode.TWO_PLAYERS -> handleLocalMove(col)
             GameMode.VS_AI -> handleAIMove(col)
             GameMode.ONLINE -> {
-                // Solo permite colocar ficha si la pregunta fue respondida correctamente
+                // Si quieres que solo se pueda poner ficha tras responder correctamente, deja la condición.
+                // Si quieres permitir siempre, elimina la condición.
                 if (_questionAttempted.value && _lastGuessedCorrectly.value) {
                     handleOnlineMove(col)
                 }
             }
-            null -> { /* No hacer nada si no hay modo seleccionado */ }
+            null -> { }
         }
     }
 
     private fun handleLocalMove(col: Int) {
-        val rows = _board.value.size
         val currentPlayerValue = if (_playerTurn.value) 1 else 2
-        val row = findAvailableRow(_board.value, col)
+        val row = logic.findAvailableRow(_board.value, col)
 
         if (row != -1) {
             _board.value = _board.value.copyWithMove(row, col, currentPlayerValue)
             when {
-                // <--- CAMBIO AQUÍ: Añadir 'row' y 'col' a checkWinner
-                checkWinner(_board.value, currentPlayerValue, row, col) -> _winner.value = currentPlayerValue
-                isBoardFull(_board.value) -> _winner.value = 3
+                logic.checkWinner(_board.value, currentPlayerValue, row, col) -> _winner.value = currentPlayerValue
+                logic.isBoardFull(_board.value) -> _winner.value = 3
                 else -> _playerTurn.value = !_playerTurn.value
             }
         }
     }
 
     fun assignWordAndStartTimer(gameId: String) {
-        fetchRandomWordFromFirebase { english, spanish ->
-            val gameRef = database.child("games").child(gameId)
-            gameRef.get().addOnSuccessListener { snapshot ->
-                val game = snapshot.getValue(Game::class.java)
-                if (game != null) {
-                    val updatedGame = game.copy(
-                        currentWordEnglish = english,
-                        correctTranslationSpanish = spanish,
-                        questionAttempted = false,
-                        lastGuessedCorrectly = false
-                    )
-                    gameRef.setValue(updatedGame)
-                    startQuestionTimer(gameId)
-                }
-            }
-        }
+        repo.assignWordAndStartTimer(
+            gameId,
+            { cb -> repo.fetchRandomWordFromFirebase(cb) },
+            { id -> startQuestionTimer(id) }
+        )
     }
 
     fun submitTranslationAnswer(gameId: String, answer: String) {
-        database.child("games").child(gameId).get().addOnSuccessListener { snapshot ->
-            val game = snapshot.getValue(Game::class.java)
-            if (game != null && !game.questionAttempted) {
-                val isCorrect = answer.trim().equals(game.correctTranslationSpanish.trim(), ignoreCase = true)
-                val updatedGame = game.copy(
-                    lastGuessedCorrectly = isCorrect,
-                    questionAttempted = true
-                )
-                database.child("games").child(gameId).setValue(updatedGame)
-                questionTimerJob?.cancel()
-                if (!isCorrect) {
-                    val nextPlayerId = if (game.currentTurnPlayerId == game.player1Id) game.player2Id else game.player1Id
-                    val gameAfterTurn = updatedGame.copy(
-                        currentTurnPlayerId = nextPlayerId ?: "",
-                        questionAttempted = false,
-                        lastGuessedCorrectly = false,
-                        currentWordEnglish = "",
-                        correctTranslationSpanish = ""
-                    )
-                    database.child("games").child(gameId).setValue(gameAfterTurn)
-                }
-            }
-        }
+        repo.submitTranslationAnswer(
+            gameId,
+            answer,
+            { game -> },
+            { updatedGame -> },
+            { questionTimerJob?.cancel() }
+        )
     }
 
     private var questionTimerJob: Job? = null
@@ -249,47 +163,25 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                 kotlinx.coroutines.delay(1000)
                 _secondsLeft.value = i
             }
-            // Cuando termina el tiempo, verifica si aún no se respondió correctamente
-            database.child("games").child(gameId).get().addOnSuccessListener { snapshot ->
-                val game = snapshot.getValue(Game::class.java)
-                if (game != null && !game.lastGuessedCorrectly && !game.questionAttempted) {
-                    // Cambia el turno al otro jugador
-                    val nextPlayerId = if (game.currentTurnPlayerId == game.player1Id) game.player2Id else game.player1Id
-                    val updatedGame = game.copy(
-                        currentTurnPlayerId = nextPlayerId ?: "",
-                        questionAttempted = false,
-                        lastGuessedCorrectly = false,
-                        currentWordEnglish = "",
-                        correctTranslationSpanish = ""
-                    )
-                    database.child("games").child(gameId).setValue(updatedGame)
-                }
-            }
+            repo.startQuestionTimer(
+                gameId,
+                { game -> },
+                { updatedGame -> }
+            )
         }
     }
 
-    private fun fetchRandomWordFromFirebase(onResult: (english: String, spanish: String) -> Unit) {
-        database.child("words").get().addOnSuccessListener { snapshot ->
-            val wordsList = snapshot.children.mapNotNull { it.getValue(Word::class.java) }
-            if (wordsList.isNotEmpty()) {
-                val word = wordsList.random()
-                onResult(word.english, word.spanish)
-            }
-        }
-    }
-
-    data class Word(val english: String = "", val spanish: String = "")    
+    data class Word(val english: String = "", val spanish: String = "")
 
     private fun handleAIMove(col: Int) {
         if (_playerTurn.value) {
-            val row = findAvailableRow(_board.value, col)
+            val row = logic.findAvailableRow(_board.value, col)
             if (row != -1) {
                 val currentPlayerValue = 1
                 _board.value = _board.value.copyWithMove(row, col, currentPlayerValue)
                 when {
-                    // <--- CAMBIO AQUÍ: Añadir 'row' y 'col' a checkWinner
-                    checkWinner(_board.value, currentPlayerValue, row, col) -> _winner.value = currentPlayerValue
-                    isBoardFull(_board.value) -> _winner.value = 3
+                    logic.checkWinner(_board.value, currentPlayerValue, row, col) -> _winner.value = currentPlayerValue
+                    logic.isBoardFull(_board.value) -> _winner.value = 3
                     else -> {
                         _playerTurn.value = false
                         viewModelScope.launch {
@@ -306,18 +198,12 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         val rows = _board.value.size
         val cols = _board.value[0].size
         val aiPlayerValue = 2
-        var chosenRow = -1
-        var chosenCol = -1
 
-        // 1. Ganar si puede
         for (c in 0 until cols) {
-            val r = findAvailableRow(_board.value, c)
+            val r = logic.findAvailableRow(_board.value, c)
             if (r != -1) {
                 val tempBoard = _board.value.copyWithMove(r, c, aiPlayerValue)
-                // <--- CAMBIO AQUÍ: Añadir 'r' y 'c' a checkWinner
-                if (checkWinner(tempBoard, aiPlayerValue, r, c)) {
-                    chosenRow = r
-                    chosenCol = c
+                if (logic.checkWinner(tempBoard, aiPlayerValue, r, c)) {
                     _board.value = tempBoard
                     _winner.value = aiPlayerValue
                     _playerTurn.value = true
@@ -326,20 +212,15 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
-        // 2. Bloquear al jugador si va a ganar
         for (c in 0 until cols) {
-            val r = findAvailableRow(_board.value, c)
+            val r = logic.findAvailableRow(_board.value, c)
             if (r != -1) {
                 val tempBoard = _board.value.copyWithMove(r, c, 1)
-                // <--- CAMBIO AQUÍ: Añadir 'r' y 'c' a checkWinner
-                if (checkWinner(tempBoard, 1, r, c)) {
-                    chosenRow = r
-                    chosenCol = c
+                if (logic.checkWinner(tempBoard, 1, r, c)) {
                     _board.value = _board.value.copyWithMove(r, c, aiPlayerValue)
-                    // <--- CAMBIO AQUÍ: Añadir 'r' y 'c' a checkWinner
-                    if (checkWinner(_board.value, aiPlayerValue, r, c)) {
+                    if (logic.checkWinner(_board.value, aiPlayerValue, r, c)) {
                         _winner.value = aiPlayerValue
-                    } else if (isBoardFull(_board.value)) {
+                    } else if (logic.isBoardFull(_board.value)) {
                         _winner.value = 3
                     }
                     _playerTurn.value = true
@@ -348,35 +229,27 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
-        // 3. Jugar en el centro (preferencia)
         val centerCol = cols / 2
-        val centerRow = findAvailableRow(_board.value, centerCol)
+        val centerRow = logic.findAvailableRow(_board.value, centerCol)
         if (centerRow != -1) {
-            chosenRow = centerRow
-            chosenCol = centerCol
             _board.value = _board.value.copyWithMove(centerRow, centerCol, aiPlayerValue)
-            // <--- CAMBIO AQUÍ: Añadir 'centerRow' y 'centerCol' a checkWinner
-            if (checkWinner(_board.value, aiPlayerValue, centerRow, centerCol)) {
+            if (logic.checkWinner(_board.value, aiPlayerValue, centerRow, centerCol)) {
                 _winner.value = aiPlayerValue
-            } else if (isBoardFull(_board.value)) {
+            } else if (logic.isBoardFull(_board.value)) {
                 _winner.value = 3
             }
             _playerTurn.value = true
             return
         }
 
-        // 4. Jugar aleatoriamente en una columna válida
-        val availableCols = (0 until cols).filter { c -> findAvailableRow(_board.value, c) != -1 }
+        val availableCols = (0 until cols).filter { c -> logic.findAvailableRow(_board.value, c) != -1 }
         if (availableCols.isNotEmpty()) {
             val randomCol = availableCols.random()
-            val r = findAvailableRow(_board.value, randomCol)
-            chosenRow = r
-            chosenCol = randomCol
+            val r = logic.findAvailableRow(_board.value, randomCol)
             _board.value = _board.value.copyWithMove(r, randomCol, aiPlayerValue)
-            // <--- CAMBIO AQUÍ: Añadir 'r' y 'randomCol' a checkWinner
-            if (checkWinner(_board.value, aiPlayerValue, r, randomCol)) {
+            if (logic.checkWinner(_board.value, aiPlayerValue, r, randomCol)) {
                 _winner.value = aiPlayerValue
-            } else if (isBoardFull(_board.value)) {
+            } else if (logic.isBoardFull(_board.value)) {
                 _winner.value = 3
             }
             _playerTurn.value = true
@@ -387,155 +260,55 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun handleOnlineMove(col: Int) {
         viewModelScope.launch {
-            val currentOnlineGameId = _onlineGameId.value
-            val currentOnlineGameRef = onlineGameRef
-            val currentOnlineGameStatus = _currentOnlineGameStatus.value
-            val currentBoard = _board.value
-
-            if (_playerTurn.value && currentOnlineGameId != null && currentOnlineGameRef != null && currentOnlineGameStatus == "playing") {
-                val row = findAvailableRow(currentBoard, col)
-                if (row != -1) {
-                    currentOnlineGameRef.get().addOnSuccessListener { dataSnapshot ->
-                        val currentOnlineGame = dataSnapshot.getValue(Game::class.java)
-                        if (currentOnlineGame != null && currentOnlineGame.currentTurnPlayerId == playerLocalId) {
-                            val currentPlayerValue = if (currentOnlineGame.player1Id == playerLocalId) 1 else 2
-                            val nextPlayerId = if (currentOnlineGame.player1Id == playerLocalId) {
-                                currentOnlineGame.player2Id
-                            } else {
-                                currentOnlineGame.player1Id
-                            }
-
-                            val updatedBoardList = currentOnlineGame.board.toMutableList()
-                            val newRowList = updatedBoardList[row].toMutableList()
-                            newRowList[col] = currentPlayerValue
-                            updatedBoardList[row] = newRowList.toList()
-
-                            val tempBoardArray = updatedBoardList.toTypedArrayOfIntArray()
-                            val newWinnerValue = when {
-                                checkWinner(tempBoardArray, currentPlayerValue, row, col) -> currentPlayerValue
-                                isBoardFull(tempBoardArray) -> 3
-                                else -> 0
-                            }
-
-                            // --- AQUÍ VA EL BLOQUE QUE LIMPIA LA PALABRA ---
-                            val updatedGame = currentOnlineGame.copy(
-                                board = updatedBoardList,
-                                currentTurnPlayerId = nextPlayerId ?: "",
-                                status = if (newWinnerValue != 0) "finished" else "playing",
-                                winnerId = when (newWinnerValue) {
-                                    1 -> currentOnlineGame.player1Id
-                                    2 -> currentOnlineGame.player2Id
-                                    else -> null
-                                },
-                                currentWordEnglish = "",
-                                correctTranslationSpanish = "",
-                                questionAttempted = false,
-                                lastGuessedCorrectly = false
-                            )
-
-                            currentOnlineGameRef.setValue(updatedGame)
-                                .addOnSuccessListener {
-                                    println("Movimiento enviado a Firebase para la columna $col")
-                                }
-                                .addOnFailureListener { e ->
-                                    println("Error al enviar movimiento a Firebase: ${e.message}")
-                                }
-                        } else {
-                            println("OnlineMove: No es tu turno o la partida ha cambiado mientras intentabas mover.")
-                        }
-                    }.addOnFailureListener { e ->
-                        println("OnlineMove: Error al obtener datos de partida para movimiento: ${e.message}")
-                    }
-                } else {
-                    println("OnlineMove: Columna $col está llena.")
-                }
-            } else if (currentOnlineGameStatus != "playing") {
-                println("OnlineMove: La partida online aún no ha comenzado. Esperando al otro jugador.")
-            } else if (!_playerTurn.value) {
-                println("OnlineMove: No es tu turno en la partida online.")
-            } else {
-                println("OnlineMove: Partida online no iniciada o ID nulo.")
-            }
+            repo.handleOnlineMove(
+                _onlineGameId.value,
+                repo.getOnlineGameRef(), // Siempre usa el valor actualizado
+                _currentOnlineGameStatus.value,
+                _board.value,
+                _playerTurn.value,
+                playerLocalId,
+                _questionAttempted.value,
+                _lastGuessedCorrectly.value,
+                col,
+                { game -> },
+                { updatedGame -> },
+                { board, player, row, col -> logic.checkWinner(board, player, row, col) },
+                { board -> logic.isBoardFull(board) }
+            )
         }
     }
 
-    // --- Funciones para Partidas Online Específicas ---
     fun createOnlineGame() {
         viewModelScope.launch {
-            generateUniqueGameId(database) { newGameId ->
-                if (newGameId != null) {
-                    val initialBoard = List(6) { List(7) { 0 } }
-                    val newGame = Game(
-                        gameId = newGameId,
-                        player1Id = playerLocalId,
-                        player2Id = null,
-                        board = initialBoard,
-                        currentTurnPlayerId = playerLocalId,
-                        status = "waiting",
-                        winnerId = null
-                    )
-
-                    database.child("games").child(newGameId).setValue(newGame)
-                        .addOnSuccessListener {
-                            _onlineGameId.value = newGameId
-                            _isCreatingGame.value = true
-                            _board.value = initialBoard.toTypedArrayOfIntArray()
-                            _winner.value = 0
-                            _playerTurn.value = true
-                            setupOnlineGameListener(newGameId)
-                            println("Partida online creada con ID: $newGameId. Esperando jugador 2...")
-                        }
-                        .addOnFailureListener { e ->
-                            println("Error al crear partida online: ${e.message}")
-                        }
-                } else {
-                    println("No se pudo crear la partida: No se encontró un ID único.")
+            repo.createOnlineGame(
+                playerLocalId,
+                { db, cb -> generateUniqueGameId(db, 5, cb) },
+                { newGameId, initialBoard ->
+                    _onlineGameId.value = newGameId
+                    _isCreatingGame.value = true
+                    _board.value = initialBoard.toTypedArrayOfIntArray()
+                    _winner.value = 0
+                    _playerTurn.value = true
+                    setupOnlineGameListener(newGameId)
                 }
-            }
+            )
         }
     }
 
     fun joinOnlineGame(enteredGameId: String) {
         viewModelScope.launch {
-            if (enteredGameId.length == 6 && enteredGameId.all { it.isDigit() }) {
-                val gameRef = database.child("games").child(enteredGameId)
-
-                gameRef.get().addOnSuccessListener { dataSnapshot ->
-                    val existingGame = dataSnapshot.getValue(Game::class.java)
-
-                    if (existingGame != null) {
-                        if (existingGame.status == "waiting" && existingGame.player2Id == null) {
-                            val updatedGame = existingGame.copy(
-                                player2Id = playerLocalId,
-                                status = "playing"
-                            )
-
-                            gameRef.setValue(updatedGame)
-                                .addOnSuccessListener {
-                                    _onlineGameId.value = enteredGameId
-                                    _isCreatingGame.value = false
-                                    setupOnlineGameListener(enteredGameId)
-                                    println("Te has unido a la partida con ID: $enteredGameId")
-                                }
-                                .addOnFailureListener { e ->
-                                    println("Error al unirse a la partida: ${e.message}")
-                                }
-                        } else {
-                            println("La partida no está disponible para unirse.")
-                        }
-                    } else {
-                        println("La partida con ID $enteredGameId no existe.")
-                    }
-                }.addOnFailureListener { e ->
-                    println("Error al obtener partida: ${e.message}")
+            repo.joinOnlineGame(
+                enteredGameId,
+                playerLocalId,
+                { id ->
+                    _onlineGameId.value = id
+                    _isCreatingGame.value = false
+                    setupOnlineGameListener(id)
                 }
-            } else {
-                println("ERROR: El ID de partida debe ser un número de 6 cifras.")
-            }
+            )
         }
     }
 
-    // --- Funciones de Reseteo ---
     fun resetGame() {
         _board.value = Array(6) { IntArray(7) { 0 } }
         _winner.value = 0
@@ -544,13 +317,9 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun resetOnlineGame() {
-        onlineGameRef?.removeEventListener(gameEventListener ?: return)
-        onlineGameRef = null
-        gameEventListener = null
+        repo.removeOnlineGameListener()
         _onlineGameId.value = null
         _isCreatingGame.value = false
         _currentOnlineGameStatus.value = null
-        println("Estado de partida online reseteado.")
     }
-
 }
